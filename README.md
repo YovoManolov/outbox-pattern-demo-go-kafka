@@ -135,14 +135,15 @@ topic back and counts inversions:
 
 ```
 ==> Order events reached Kafka in (first 40):
-1 3 2 4 5 7 8 6 9 12 11 10 13 15 16 14 17 19 18 20 21 22 24 23 25 28 27 26 ...
+3 2 1 4 5 6 7 8 10 9 11 12 14 13 15 16 19 18 17 20 23 22 21 24 25 26 27 ...
 
     published:      120
     duplicates:     0
-    out of order:   32
+    out of order:   33
+    relays:         4 (3 started here, 30 events published by pre-existing relays)
 ```
 
-`duplicates: 0` is `SKIP LOCKED` doing its job; `out of order: 32` is what it
+`duplicates: 0` is `SKIP LOCKED` doing its job; `out of order: 33` is what it
 costs. The exact count varies between runs - it's a race, not a deterministic
 result - but the shape is consistent: events land one to three positions away
 from where they should be, because relays claim adjacent rows microseconds
@@ -152,10 +153,15 @@ The race is also load-dependent. At low volume (say 40 events across 2
 relays) the test often reports `0`, which is what makes this an unpleasant
 production surprise rather than something a smoke test catches.
 
-Your own `go run ./cmd/relay` competes in the test too, so `3` means four
-relays in total. The script uses a dedicated `probe.seq` event type and a
-fixed probe UUID; it clears that data at the start of each run, so to tidy up
-before taking screenshots of the main demo:
+Note the `relays:` line. The second argument is how many relays the script
+starts itself, but any relay you already have running (your `go run
+./cmd/relay` terminal, for instance) competes for the same rows, so the real
+concurrency is usually one higher. The script detects this by counting how
+many events its own relays published and attributing the rest.
+
+The script uses a dedicated `probe.seq` event type and a fixed probe UUID; it
+clears that data at the start of each run, so to tidy up before taking
+screenshots of the main demo:
 
 ```bash
 docker exec outbox-postgres psql -U outbox -d outbox_demo -c "

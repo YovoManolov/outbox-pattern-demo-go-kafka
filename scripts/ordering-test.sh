@@ -59,6 +59,18 @@ echo
 echo "==> Order events reached Kafka in (first 40):"
 echo "$SEQ" | head -40 | tr '\n' ' '; echo
 echo
+# Count what this script's own relays published. Anything left over was
+# published by a relay that was already running (e.g. your `go run
+# ./cmd/relay` terminal), which competes in the test too.
+MINE=0
+for i in $(seq 1 "$RELAYS"); do
+  N=$(grep -c 'published probe.seq' "$TMP/relay$i.log" || true)
+  MINE=$((MINE + N))
+done
+OTHER=$((EVENTS - MINE))
+TOTAL=$RELAYS
+[ "$OTHER" -gt 0 ] && TOTAL=$((RELAYS + 1))
+
 echo "$SEQ" | awk -v n="$EVENTS" '
   NR==1 {max=$1; next}
   { if ($1 < max) inv++; else max=$1 }
@@ -67,3 +79,4 @@ echo "$SEQ" | awk -v n="$EVENTS" '
     printf "    duplicates:     %d\n", NR - n
     printf "    out of order:   %d\n", inv+0
   }'
+echo "    relays:         $TOTAL ($RELAYS started here, $OTHER events published by pre-existing relays)"
