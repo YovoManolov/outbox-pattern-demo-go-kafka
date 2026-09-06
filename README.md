@@ -135,16 +135,21 @@ topic back and counts inversions:
 
 ```
 ==> Order events reached Kafka in (first 40):
-1 3 2 4 7 5 6 8 11 10 9 12 13 14 15 16 17 18 19 20 22 23 21 24 26 25 ...
+1 3 2 4 5 7 8 6 9 12 11 10 13 15 16 14 17 19 18 20 21 22 24 23 25 28 27 26 ...
 
     published:      120
     duplicates:     0
-    out of order:   31
+    out of order:   32
 ```
 
-`duplicates: 0` is `SKIP LOCKED` doing its job; `out of order: 31` is what it
-costs. Note that the race is load-dependent - at low volume (say 40 events
-across 2 relays) it often reports `0`, which is what makes it an unpleasant
+`duplicates: 0` is `SKIP LOCKED` doing its job; `out of order: 32` is what it
+costs. The exact count varies between runs - it's a race, not a deterministic
+result - but the shape is consistent: events land one to three positions away
+from where they should be, because relays claim adjacent rows microseconds
+apart and then race over a few milliseconds of network.
+
+The race is also load-dependent. At low volume (say 40 events across 2
+relays) the test often reports `0`, which is what makes this an unpleasant
 production surprise rather than something a smoke test catches.
 
 Your own `go run ./cmd/relay` competes in the test too, so `3` means four
