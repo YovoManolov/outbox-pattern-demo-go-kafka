@@ -135,15 +135,15 @@ topic back and counts inversions:
 
 ```
 ==> Order events reached Kafka in (first 40):
-3 2 1 4 5 6 7 8 10 9 11 12 14 13 15 16 19 18 17 20 23 22 21 24 25 26 27 ...
+3 2 1 4 6 5 7 8 10 11 9 12 13 15 14 16 17 18 19 20 21 23 22 24 26 27 25 ...
 
     published:      120
     duplicates:     0
-    out of order:   33
+    out of order:   34
     relays:         4 (3 started here, 30 events published by pre-existing relays)
 ```
 
-`duplicates: 0` is `SKIP LOCKED` doing its job; `out of order: 33` is what it
+`duplicates: 0` is `SKIP LOCKED` doing its job; `out of order: 34` is what it
 costs. The exact count varies between runs - it's a race, not a deterministic
 result - but the shape is consistent: events land one to three positions away
 from where they should be, because relays claim adjacent rows microseconds
