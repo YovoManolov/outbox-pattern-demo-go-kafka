@@ -2,7 +2,7 @@
 
 A minimal, runnable implementation of the **transactional outbox pattern**:
 how to reliably publish an event to Kafka *only if* a related database write
-succeeds — without a distributed transaction and without ever losing an event.
+succeeds - without a distributed transaction and without ever losing an event.
 
 ## The problem it solves
 
@@ -49,7 +49,7 @@ it finds to Kafka, then marks it done.
 ```
 
 Because the order row and the outbox row are written in one transaction,
-either both exist or neither does — there's no window where an order is
+either both exist or neither does - there's no window where an order is
 saved but its event is lost. The relay guarantees **at-least-once**
 delivery to Kafka (it's possible for an event to be published twice if the
 relay crashes between the Kafka write and the `UPDATE ... SET published_at`,
@@ -58,13 +58,14 @@ so consumers should be idempotent).
 ## Project layout
 
 ```
-cmd/api/        HTTP service — POST /orders creates an order + outbox event
+cmd/api/        HTTP service - POST /orders creates an order + outbox event
 cmd/relay/      Polls outbox_events and publishes unpublished rows to Kafka
 cmd/consumer/   Demo consumer that prints events as they arrive
 internal/store/ The transactional write + the claim-publish-mark logic
 internal/model/ Order + event types
 db/init.sql     Schema for orders and outbox_events
 docker-compose.yml   Kafka (KRaft, single node) + Postgres + Kafka UI
+scripts/ordering-test.sh   Measures the SKIP LOCKED ordering caveat
 ```
 
 ## Running it
@@ -95,8 +96,74 @@ Kafka UI is available at http://localhost:8080 if you want to browse the
 
 ## What to try next
 
-- Kill the relay mid-poll and restart it — no events are lost.
-- Run two relay instances at once — `FOR UPDATE SKIP LOCKED` keeps them
-  from double-processing the same row.
+- Kill the relay mid-poll and restart it - no events are lost.
+- Run two relay instances at once - `FOR UPDATE SKIP LOCKED` keeps them
+  from double-processing the same row (but see the ordering caveat below).
 - Swap the polling relay for Debezium reading the Postgres WAL, for a
   CDC-based version of the same pattern with lower latency.
+
+## The ordering caveat (and how to measure it)
+
+`FOR UPDATE SKIP LOCKED` lets you add relay instances without electing a
+leader, and no row is ever processed twice concurrently. What it does *not*
+give you is **per-aggregate ordering**.
+
+Because each relay skips rows another has locked, three relays draining
+events 1, 2, 3 for the same aggregate end up holding one row each - and then
+publish concurrently. Whichever `WriteMessages` call reaches the broker
+first lands first:
+
+```
+Relay A: claims seq 1 (locks it)
+Relay B: seq 1 locked -> SKIPS -> claims seq 2
+Relay C: seq 1,2 locked -> SKIPS -> claims seq 3
+         ...all three publish at once; arrival order is a race
+```
+
+This matters here because the relay keys messages by aggregate ID
+(`kafka.Hash{}`), so every event for one order lands on a single partition.
+Kafka preserves order *within* a partition - but only in arrival order, so
+it faithfully preserves whatever sequence the relays produced.
+
+`scripts/ordering-test.sh` measures it. It seeds N sequenced events for a
+single aggregate, drains them with several concurrent relays, then reads the
+topic back and counts inversions:
+
+```bash
+./scripts/ordering-test.sh 120 3    # [num_events] [num_relays]
+```
+
+```
+==> Order events reached Kafka in (first 40):
+1 3 2 4 7 5 6 8 11 10 9 12 13 14 15 16 17 18 19 20 22 23 21 24 26 25 ...
+
+    published:      120
+    duplicates:     0
+    out of order:   31
+```
+
+`duplicates: 0` is `SKIP LOCKED` doing its job; `out of order: 31` is what it
+costs. Note that the race is load-dependent - at low volume (say 40 events
+across 2 relays) it often reports `0`, which is what makes it an unpleasant
+production surprise rather than something a smoke test catches.
+
+Your own `go run ./cmd/relay` competes in the test too, so `3` means four
+relays in total. The script uses a dedicated `probe.seq` event type and a
+fixed probe UUID; it clears that data at the start of each run, so to tidy up
+before taking screenshots of the main demo:
+
+```bash
+docker exec outbox-postgres psql -U outbox -d outbox_demo -c "
+DELETE FROM outbox_events WHERE event_type='probe.seq';
+DELETE FROM orders WHERE id='11111111-1111-1111-1111-111111111111';"
+```
+
+If you need ordering, the options are:
+
+- **Claim one aggregate at a time** rather than the next row - lock the
+  aggregate so all its events drain through a single relay in sequence. You
+  keep parallelism across orders and lose it only within one, which is
+  usually exactly the tradeoff you want.
+- **Shard the outbox** by hashing `aggregate_id` and give each relay a slice.
+- **Stay single-relay** and accept the throughput ceiling (what this demo
+  does by default).
